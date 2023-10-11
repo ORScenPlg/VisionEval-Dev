@@ -715,7 +715,7 @@ loadModel <- function(
     # Copy over the required packages part of the loaded model state
     # That's all we need so we can parse the current module calls successfully
     if ( "RequiredVEPackages" %in% names(LoadDstore$ModelState_ls) ) {
-      AlreadyInitialized <- LoadDstore$ModelState_ls$RequiredVEPackages
+      #AlreadyInitialized <- LoadDstore$ModelState_ls$RequiredVEPackages
       RequiredPackages <- unique(c(RequiredPackages, LoadDstore$ModelState_ls$RequiredVEPackages))
     }
   }
