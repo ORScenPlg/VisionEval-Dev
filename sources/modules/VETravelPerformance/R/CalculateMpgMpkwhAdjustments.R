@@ -778,6 +778,17 @@ CalculateMpgMpkwhAdjustments <- function(L) {
       #Get the congestion efficiency level
       YearIdx <-
         which(EnergyEmissionsDefaults_ls$CongestionEfficiency_df$Year == L$G$Year)
+      
+      ##### start new code modification, when the model year isn't in 5 year increments (e.g. 2020, 2050), match to the closet 5 year increment. (eg. 2021=2020)
+      if(length(YearIdx) == 0) {
+        # Calculate the absolute difference between L$G$Year and each year in the dataframe
+        yearDiff <- abs(as.numeric(EnergyEmissionsDefaults_ls$CongestionEfficiency_df$Year) - as.numeric(L$G$Year))
+        
+        # Find the index of the minimum difference
+        YearIdx <- which.min(yearDiff)
+      }
+      #### end code modification
+      
       CongEff <-
         EnergyEmissionsDefaults_ls$CongestionEfficiency_df[YearIdx, VehPtType]
       #Get the reference speed
