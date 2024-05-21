@@ -90,13 +90,6 @@ Makefile which R to use for those processes.
         VE_DELETE, it leaves behind the built packages). Useful if you are just removing
         some folders from the package build source.
      </dd>
-     <dt>VE_MCLEAR</dt>
-     <dd>This environment variable is used in the build-modules.R script, and does
-        not appear in the Makefile. Set it to "yes" or "no" (without the quotes). If set to
-        "yes", it will remove the package source folder prior to building (unlike
-        VE_DELETE, it leaves behind the built packages). Useful if you are just removing
-        some folders from the package build source.
-      </dd>
       <dt>VE_MDOCS</dt>
       <dd> Mutually exclusive options (strip everything from a comma on) that can be set
          to "all" (generate all documents), "init" (regenerate only NAMESPACE and
@@ -110,6 +103,8 @@ Makefile which R to use for those processes.
          CMD check with tests enabled) (unit testing); "run" says do runtime tests after
          the package has been built (good for developers); or "none"- do no tests (usually
          it is simplest to set `VE_MTEST="none"` indirectly by setting `VE_EXPRESS=yes`)
+         **Currently, none of VisionEval's modules have working unit tests, so this
+         option is mostly accessed internally by setting `VE_EXPRESS=yes`**
       </dd>
 </dl>
 
@@ -128,7 +123,7 @@ want to change them. They are documented here so you won't worry.
 </dl>
 
 ~~~
-# This is VisionEval Makefile Version 3.0 ("NextGen")
+# This is VisionEval Makefile Version 3.1 ("NextGen")
 # You can override VE_CONFIG, VE_RUNTESTS, VE_EXPRESS, VE_BRANCH and VE_R_VERSION
 # on the command line or export them from your environment
 # ve.build() handles useful defaults
@@ -140,7 +135,7 @@ VE_RUNTESTS?=Default
 VE_EXPRESS?=YES # should be NO, or unset, for standard use
 VE_BRANCH?=$(shell git branch --show-current 2>/dev/null || echo visioneval)
 ifeq ($(OS),Windows_NT)
-  VE_R_VERSION?=4.3.1
+  VE_R_VERSION?=4.3.2
   RTERM:="$(shell scripts/find-R.bat $(VE_R_VERSION))"
   WINDOWS=TRUE
 else
@@ -194,7 +189,7 @@ if they are out of date).
 .PHONY: list-targets help show-defaults\
 	configure repository lib modules runtime docs\
 	build all dev\
-	installer installers installer-bin installer-full\
+	installer installer-bin installer-full\
 	configure-build repository-build lib-build modules-build runtime-build docs-build\
 	clean build-build all-build dev-build clean-build\
 	installer-build installer-bin-build installer-full-build\
@@ -376,9 +371,10 @@ configure-build: $(VE_MAKEVARS) $(VE_RUNTIME_CONFIG)
 # Note: build-config.R identifies VE_CONFIG via the exported environment variable
 $(VE_MAKEVARS) $(VE_RUNTIME_CONFIG): scripts/build-config.R $(VE_CONFIG) R-versions.yml
 	: Build Environment:
-	:     R Version = $(VE_R_VERSION)
-	: Configuration = $(VE_CONFIG)
-	:    Git branch = $(VE_BRANCH)
+	:     R Version   = $(VE_R_VERSION)
+	: Configuration   = $(VE_CONFIG)
+	:    Git branch   = $(VE_BRANCH)
+        : Build directory = $(VE_BUILD)
 	$(RSCRIPT) scripts/build-config.R
 
 # This rule and the following one rebuild the repository of dependencies for VE_R_VERSION
@@ -457,10 +453,6 @@ $(VE_LOGS)/book.built:
 # 'bin' is the binary installer for the local architecture (e.g. Windows or MacOSX)
 #     (also package source as a separate zip file)
 # 'src' is install-from-source installer (source packages for everything, including dependencies)
-installers: installers-reset installers-build
-
-installers-build: installer-bin installer-full
-
 installer installer-bin: installer-reset installer-build
 
 installer-build installer-bin-build: $(VE_LOGS)/installer-bin.built

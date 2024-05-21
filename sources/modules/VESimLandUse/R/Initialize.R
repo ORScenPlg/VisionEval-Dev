@@ -702,27 +702,21 @@ Initialize <- function(L) {
     MetroJobProp_ <- L$Data$Year$Azone$PropWkrInMetroJobs[IsYearAndNone]
     if (any(MetroHhProp_ != 0)) {
       ErrAzones_ <- AzNone_[which(MetroHhProp_ != 0)]
-      Msg <- paste0(
+      Msg <- c(paste0(
         "Error in 'azone_hh_loc_type_prop.csv' input file for year ", yr, ". ",
-        "The values for the 'PropMetroHh' field for one or more Azones ",
-        "that are identified as being in Marea 'None' are not 0. ",
-        "By definition, Marea 'None' means that it is not a metropolitan area. ",
-        "Therefore, the value of 'PropMetroHh' must be 0. ",
-        "Correct the entries for the following Azones: ",
-        paste(ErrAzones_, collapse = ", ")
+        "The values for the 'PropMetroHh' field in Azones with Marea 'None' are not all 0. ",
+        "Marea 'None' means that it is not a metropolitan area so 'PropMetroHh' must be 0."),
+        paste0("Correct the entries for the following Azones: ",paste(ErrAzones_, collapse = ", "))
       )
       Errors_ <- c(Errors_, Msg)
     }
     if (any(MetroJobProp_ != 0)) {
       ErrAzones_ <- AzNone_[which(MetroJobProp_ != 0)]
-      Msg <- paste0(
+      Msg <- c(paste0(
         "Error in 'azone_wkr_loc_type_prop.csv' input file for year ", yr, ". ",
-        "The values for the 'PropWkrInMetroJobs' field for one or more Azones ",
-        "that are identified as being in Marea 'None' are not 0. ",
-        "By definition, Marea 'None' means that it is not a metropolitan area. ",
-        "Therefore, the value of 'PropWkrInMetroJobs' must be 0. ",
-        "Correct the entries for the following Azones: ",
-        paste(ErrAzones_, collapse = ", ")
+        "The values for the 'PropWkrInMetroJobs' in Azones with Marea 'None' are not 0. ",
+        "Marea 'None' means that it is not a metropolitan area so 'PropWkrInMetroJobs' must be 0."),
+        paste0("Correct the entries for the following Azones: ",paste(ErrAzones_, collapse = ", "))
       )
       Errors_ <- c(Errors_, Msg)
     }
@@ -741,26 +735,30 @@ Initialize <- function(L) {
     for (ma in Ma) {
       Az <- AzonesByMarea_ls[[ma]]
       IsYearAndMarea <- with(PropMetroJobs_df, Year == yr & Geo %in% Az)
+      writeLog(paste("Azones in Marea",ma,":",paste(Az,collapse=", ")),Level="debug")
       PropMetroJobs_ <- with(PropMetroJobs_df, PropMetroJobs[IsYearAndMarea])
       names(PropMetroJobs_) <- with(PropMetroJobs_df, Geo[IsYearAndMarea])
+      writeLog(paste("Azone",names(PropMetroJobs_),"has prop",PropMetroJobs_),Level="debug")
       TotProp <- sum(PropMetroJobs_)
+      writeLog(paste("Marea",ma,"TotProp",TotProp),Level="debug")
       Diff <- abs(1 - TotProp)
       if (Diff >= 0.01) {
         Msg <- paste0(
-          "Error in input values for 'PropMetroJobs' for Marea ",
+          "Input Error for 'PropMetroJobs' for Marea ",
           ma, " and Year ", yr,
-          ". The sum of values for Azones in the Marea is off by more than 1%. ",
-          "They should add up to 1."
+          ". The sum of values for Azones in the Marea is off by more than 1% (",
+          TotProp,
+          "). They should add up to 1."
         )
         Errors_ <- c(Errors_, Msg)
       } else {
         if (Diff != 0) {
           Msg <- paste0(
-            "Warning regarding input values for 'PropMetroJobs' for Marea ",
+            "Input Warning for 'PropMetroJobs' for Marea ",
             ma, " and Year ", yr,
             ". The sum of values for Azones in the Marea do not add up to 1 ",
-            "but are off by less than 1%. ",
-            "They have been adjusted to add up to 1."
+            "but are off by less than 1% (",TotProp,
+            "). They have been adjusted to add up to 1."
           )
           Warnings_ <- c(Warnings_, Msg)
           PropMetroJobs_ <- PropMetroJobs_ / sum(PropMetroJobs_)
@@ -832,7 +830,7 @@ Initialize <- function(L) {
         WkrPopAdj_AzRe <- as.matrix(data.frame(L$Data$Year$Azone)[IsYear, Re])
       } else {
         # Create a dummy matrix with all proportions set to 1
-        MkrPopAdj_AzRe <- matrix(1,nrow=length(which(IsYear)),ncol=length(Re))
+        WkrPopAdj_AzRe <- matrix(1,nrow=length(which(IsYear)),ncol=length(Re))
       }
       rownames(WkrPopAdj_AzRe) <- L$Data$Year$Azone$Geo[IsYear]
       WkrProp_AzAg <- sweep(WkrPopAdj_AzRe, 2, WkrProp_Ag, "*")

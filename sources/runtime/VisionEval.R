@@ -179,21 +179,26 @@ if ( .Platform$OS.type == 'windows' || install.success ) {
 # Load visioneval
 if ( install.success ) {
   require("VEModel") # load explicitly onto the search path
-  # Development environment may have set an alternate location
+  # Development environment may have set an alternate location in the system environment
   if ( ! exists("ve.runtime",envir=env.loc,inherit=FALSE) ) {
     env.loc$ve.runtime <- Sys.getenv("VE_RUNTIME",getwd())
     VEModel::setRuntimeDirectory(env.loc$ve.runtime)
   }
   # Write R_LIBS_USER into .Renviron to ve.load.dir and ve.runtime to
-  # expedite next startup; do not overwrite since the development
+  # expedite next startup; do not overwrite other values since the development
   # environment or the user may have set them manually. This may also
   # have the effect of copying the ve-lib location from a .Renviron
   # set elsewhere (notably in the system or user's own .Renviron).
-  sapply(
-    file.path(c(ve.load.dir,ve.runtime),".Renviron"),
-    renv.txt = paste0("R_LIBS_USER=",paste(collapse=";",.libPaths()[-length(.libPaths())])), # ignore base library
-    FUN=function(renv.txt,renv.file) if ( ! file.exists(renv.file) ) writeLines(renv.txt,renv.file)
+  
+  renv.file <- file.path(c(ve.load.dir,env.loc$ve.runtime),".Renviron")
+  renv.txt <- c(
+    paste0("R_LIBS_USER=",paste(collapse=";",.libPaths()[-length(.libPaths())])), # ignore base library
+    paste0("VE_HOME=",normalizePath(ve.load.dir,winslash="/",mustWork=TRUE)),
+    paste0("VE_RUNTIME=",normalizePath(env.loc$ve.runtime,winslash="/",mustWork=TRUE))
   )
+  # Using sapply to write multiple .Renviron files in different places
+  # (renv.file is a vector of file paths, each of which receives the .Renviron file
+  sapply( renv.file, FUN=function(r) if ( ! file.exists(r) ) writeLines(renv.txt,r) )
 
   # Load tools (helper functions) from their subdirectory in ve.load.dir
   env.loc$load.helpers <- function() {
@@ -260,9 +265,9 @@ if ( install.success ) {
   }
 
   # function to set up the walkthrough and its runtime
-  env.loc$walkthrough <- function(reset=FALSE) {
+  env.loc$walkthrough <- function() {
     # Locate walkthrough directory (sub-directory of ve.runtime)
-    if ( ! exists("env.loc") ) env.loc <- as.environment("ve.env")
+    env.loc <- if ( ! "ve.env" %in% search() ) attach(NULL,name="ve.env") else as.environment("ve.env")
     if ( ! dir.exists("walkthrough") ) { # in case we're not in a configured ve.runtime
       if ( dir.exists(env.loc$ve.runtime) && getwd() != env.loc$ve.runtime ) {
         setwd(env.loc$ve.runtime)
@@ -279,8 +284,7 @@ if ( install.success ) {
     setwd("walkthrough") # Go there
 
     # Load the setup to create the walkthrough runtime if one is not already present
-    # Will stop in normalizePath if setup.R is not present in getwd()
-    message("setwd(ve.runtime) to exit walkthrough environment")
+    # Will stop in normalizePath if 00-setup.R is not present in getwd()
     message("Loading walkthrough from ",normalizePath("00-setup.R",winslash="/",mustWork=TRUE))
     source("00-setup.R") # will stop if we cannot create or change to walkthrough runtime directory
     walkthroughScripts <- grep("00-setup.R",invert=TRUE,value=TRUE,dir("..",pattern="^[01].*\\.R$",full.names=TRUE))
@@ -296,7 +300,7 @@ if ( install.success ) {
   # Make sure there is a "Models" directory in the actual runtime folder
   env.loc$ModelRoot <- VEModel::getModelDirectory() # Uses runtime configuration or default value "models"
   if ( ! dir.exists(env.loc$ModelRoot) ) {
-    message("Creating runtime ",basename(env.log$ModelRoot)," directory")
+    message("Creating runtime ",basename(env.loc$ModelRoot)," directory")
     dir.create(env.loc$ModelRoot,recursive=TRUE,showWarnings=FALSE)
   }
 

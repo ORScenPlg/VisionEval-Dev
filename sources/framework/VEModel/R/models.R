@@ -1043,7 +1043,7 @@ ve.stage.init <- function(modelParam_ls,Name=NULL,Model=NULL,ScenarioDir=NULL,st
     if ( is.null(modelParam_ls) ) modelParam_ls <- list()
   }
 
-  if ( is.null(Model) || ! "VEModel" %in% class(Model) ) {
+  if ( is.null(Model) || ! inherits(Model,"VEModel") ) {
     stop("No VEModel provided to own model stage ",Name)
   } else self$Model <- Model
 
@@ -2027,7 +2027,7 @@ requirePackage <- visioneval::requirePackage
 # Helper to get multitasking strategy name
 futureStrategyName <- function(strategy) {
   return (
-    if ( ! is.null(strategy) && "FutureStrategy" %in% class(strategy) ) {
+    if ( ! is.null(strategy) && inherits(strategy,"FutureStrategy") ) {
       # Hack from future::print.FutureStrategy
       # Get first class that is not one of the structural ones
       setdiff(class(strategy), c("FutureStrategy", "tweaked", "function"))[1]
@@ -2556,14 +2556,17 @@ ve.model.findstages <- function(stage=character(0),Reportable=TRUE) {
 # stages are named explicitly, the results for the named stages will be included even if they are
 # "StartFrom" stages or are otherwise not reportable.
 # This function will return even if the model has not been run, or has incomplete stages: the
-# stages with missing results will show up as "Not Run Yet" and will be ignored for export, etc.
+# stages with missing results will show up as "Not Run Yet" and will
+# be ignored for export, etc.
+# TODO: allow results from partial model stage runs if an explicit stage is provided to $results()
+# In general, validity should be evaluated stage-by-stage if a specific stage was compared...
 ve.model.results <- function(stage=character(0)) {
 
   if ( ! private$p.valid ) {
     writeLog(paste0("Invalid model: ",self$printStatus()),Level="error")
     return( NULL )
   }
-
+  
   stages <- self$findstages(stage) # empty vector (default) gets all Reportable stages
   if ( length(stages)==0 ) {
     writeLog(paste("Available stages:",names(self$modelStages),collapse=", "),Level="error")
@@ -2650,11 +2653,6 @@ ve.model.exporter <- function(file=NULL,tag=NULL,connection=NULL,partition=NULL)
 #' The `modelPath` parameter locates a model object. When a model is opened, a
 #'   a relative modelPath will be sought in the user's runtime `models` directory.
 #'   An absolute path will be sought only in the user's file system.
-#'
-#' You can set an alternate location for the "models" subdirectory by providing an
-#'   a path using, for example, `options(VEModelPath='mymodels')`. Relative paths
-#'   will be sought below the VisionEval runtime directory. Absolute paths will
-#'   be sought in the user's file system.
 #'
 #' An error will be raised if a model cannot be found with the indicated
 #'   modelPath and modelName.

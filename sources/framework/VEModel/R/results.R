@@ -397,7 +397,15 @@ ve.results.init <- function(ResultsPath,ResultsName=NULL,ModelStage=NULL) {
   self$RunParam_ls <- self$ModelState()$RunParam_ls
   self$loadedParam_ls <- self$RunParam_ls # establish interface for environment.R/getSetup
   self$modelStage <- ModelStage # may be NULL; only used to get stage elements for category scenarios via the R visualizer
+  self$BaseYear <- BaseYear(self$RunParam_ls) 
   return(self$valid())
+}
+
+# return structure indicating if the current result set contains Base Year results
+BaseYear <- function(RunParam_ls) {
+  baseYear <- RunParam_ls$BaseYear
+  containsBaseYear <- as.character(RunParam_ls$BaseYear) %in% as.character(RunParam_ls$Years) # make sure types are consistent (int vs char)
+  return ( list(BaseYear=baseYear,isBaseYear=containsBaseYear) )
 }
 
 # Get tables of data from the Datastore for a specific stage/scenario
@@ -448,6 +456,7 @@ ve.results.extract <- function(
     if ( ! is.list(Data_ls) ) stop("Data_ls is not a list")
 
     # Report Missing Tables from readDatastoreTables
+    writeLog("Checking for Missing Tables",Level="warn")
     HasMissing_ <- unlist(lapply(Data_ls$Missing, length)) != 0
     if (any(HasMissing_)) {
       WhichMissing_ <- which(HasMissing_)
@@ -474,10 +483,11 @@ ve.results.extract <- function(
     # Handle tables with different lengths of data elements ("multi-tables")
     # readDatastoreTables will have returned a ragged list rather than a data.frame
 
+    writeLog("Checking multitables...",Level="warn")
     if ( ! all(is.df <- sapply(Data_ls$Data,is.data.frame)) ) {
       # Unpack "multi-tables"
       MultiTables <- Data_ls$Data[which(! is.df)] # usually, there's just one of these...
-      writeLog(paste("Processing multitables: ",paste(MultiTables,collapse=",")),Level="warn")
+      writeLog(paste("Processing multitables: ",paste(names(MultiTables),collapse=",")),Level="warn")
       if ( length(MultiTables) > 0 ) {
         for ( multi in names(MultiTables) ) {
           # multi is a list of datasets not made into a data.frame by readDatastoreTables
@@ -526,6 +536,7 @@ ve.results.extract <- function(
       }
     )
     # Make sure Metadata includes added column descriptions
+    writeLog("Fixing up Metadata column descriptions",Level="warn")
     Metadata <- lapply(names(Metadata),function(tbl) {
       dfm <- Metadata[[tbl]]
       rnames <- names(dfm)
@@ -552,6 +563,7 @@ ve.results.extract <- function(
     names(Metadata) <- names(Data_ls$Data)
 
     # Process the table data.frames into results, adding Metadata as an attribute
+    writeLog(paste0("Adding Group '",group,"' to results"),Level="warn")
     results[[ group ]] <- structure(Data_ls$Data,Metadata=Metadata)
   }
   invisible(results) # results will be a named list of groups from the stage results, with each group being
@@ -745,7 +757,7 @@ addDisplayUnits <- function(GTN_df,Param_ls) {
 #   cat("DisplayUnitsFile:\n")
 #   print(DisplayUnitsFile)
   displayUnits <- try(utils::read.csv(DisplayUnitsFile),silent=TRUE)   # May fail for various reasons
-  if ( ! "data.frame" %in% class(displayUnits) ) {
+  if ( ! inherits(displayUnits,"data.frame") ) {
     writeLog( Level="warn",
       c(
         "Error reading DisplayUnits file:",
@@ -769,10 +781,10 @@ addDisplayUnits <- function(GTN_df,Param_ls) {
   # Only look at relevant columns in displayUnits when merging
   displayUnits <- try( merge(GTN_df,displayUnits[,displayColumns],by=c("Group","Table","Name"),all.x=TRUE), silent=TRUE )
   if (
-    ! "data.frame" %in% class(displayUnits) ||
+    ! inherits(displayUnits,"data.frame") ||
     ! all( c("Group","Table","Name","DisplayUnits") %in% names(displayUnits) ) # it can have other fields, e.g. original Units
   ) {
-    if ( "data.frame" %in% class(displayUnits) ) {
+    if ( inherits(displayUnits,"data.frame") ) {
       displayUnits <- paste("Bad Fields - ",names(displayUnits),collapse=", ")
     } else {
       displayUnits <- conditionMessage(attr(displayUnits,"condition"))
@@ -866,6 +878,7 @@ VEResults <- R6::R6Class(
     modelIndex     = NULL,
     RunParam_ls    = NULL,
     loadedParam_ls = NULL,
+    BaseYear       = NULL,
 
     # methods
     initialize=ve.results.init,
@@ -1007,7 +1020,7 @@ ve.select.parse <- function(select) {
   # select can be another VESelection
   #   if it is the same model, just copy its selection
   #   if not the same model, get other selection's VEResults object and parse that
-  if ( "VESelection" %in% class(select) ) {
+  if ( inherits(select,"VESelection") ) {
     if ( select$resultsList$Model$modelResults != self$resultsList$Model$modelResults ) {
       # Selection came from a different set of results, so equate them via the fields list
       # Presumes the scenario names are the same.
@@ -1022,7 +1035,7 @@ ve.select.parse <- function(select) {
   #   if the other VEResultsList is not from the same model, use its $fields set of names
   #   then parse as a character vector
   #   if it is the same model, just copy its selection
-  if ( "VEResults" %in% class(select) ) {
+  if ( inherits(select,"VEResults") ) {
     if ( select$resultsPath != self$resultsList$resultsPath ) {
       select <- select$selection$fields()
     } else {

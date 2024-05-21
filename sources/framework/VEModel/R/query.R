@@ -62,10 +62,23 @@ ve.query.init <- function(
 ) {
   # Fill in useful filename default
   if ( !is.null(FileName) && is.null(QueryName) ) {
+    if ( ! is.character(FileName) ) {
+      msg <- writeLog("FileName needs to be a character string",Level="error")
+      stop(msg,call.=FALSE)
+    }
     QueryName <- sub("\\.[^.]*$","",basename(FileName))
+  } else if ( ! is.null(QueryName) && ! is.character(QueryName) ) {
+    if ( inherits(QueryName,"VEQuery") ) { # allow QueryName to stand in for OtherQuery
+      OtherQuery <- QueryName
+      QueryName <- NULL
+    } else {
+      msg <- writeLog("QueryName is not a character string; use OtherQuery=... instead",Level="error")
+      stop(msg,call.=FALSE)
+    }
   }
-  if ( ! is.null(QuerySpec) && ! is.list(QuerySpec) && ! "VEQuery" %in% class(QuerySpec) ) {
-    if ( "VEQuerySpec" %in% class(QuerySpec) ) {
+
+  if ( ! is.null(QuerySpec) && ! is.list(QuerySpec) && ! inherits(QuerySpec,"VEQuery") ) {
+    if ( inherits(QuerySpec,"VEQuerySpec") ) {
       QuerySpec <- list(QuerySpec) # a single query spec becomes a list of one
     } else if ( !is.null(QuerySpec) ) {
       writeLogMessage("Unrecognized QuerySpec:")
@@ -75,12 +88,12 @@ ve.query.init <- function(
   }
   otherValid <- TRUE
   if ( ! is.null(OtherQuery) ) {
-    if ( ! "VEQuery" %in% class(OtherQuery) ) {
+    if ( ! inherits(OtherQuery,"VEQuery") ) {
       if ( is.list(OtherQuery) && length(OtherQuery)>0 ) {
-        if ( ! "VEQuerySpec" %in% class(OtherQuery[[1]]) ) {
+        if ( ! inherits(OtherQuery[[1]],"VEQuerySpec") ) {
           OtherQuery <- list(VEQuerySpec$new(OtherQuery))
         }
-        if ( "VEQuerySpec" %in% class(OtherQuery[[1]]) ) {
+        if ( inherits(OtherQuery[[1]],"VEQuerySpec") ) {
           QuerySpec <- OtherQuery
           OtherQuery <- NULL
         } else {
@@ -258,7 +271,7 @@ ve.query.check <- function(verbose=FALSE) {
   self$CheckMessages <- character(0)
   query.names <- character(0)
   for ( spec in private$QuerySpec ) {
-    if ( ! "VEQuerySpec" %in% class(spec) ) {
+    if ( ! inherits(spec,"VEQuerySpec") ) {
       self$CheckMessages <- c(
         self$CheckMessages,
         "QuerySpec contains an unknown type of object:",
@@ -299,9 +312,9 @@ ve.query.add <- function(obj,location=0,before=FALSE,after=TRUE) {
   if ( is.list(obj) ) {
     spec <- asSpecList(obj)
     # Don't try to recover if the spec has invalid elements
-  } else if ( "VEQuery" %in% class(obj) ) {
+  } else if ( inherits(obj,"VEQuery") ) {
     spec <- obj$getlist() # Clone the spec list from obj (which is another query)
-  } else if ( "VEQuerySpec" %in% class(obj) ) {
+  } else if ( inherits(obj,"VEQuerySpec") ) {
     # Make a bare query spec into a one-element list
     spec <- list(obj)
     names(spec) <- obj$Name
@@ -432,12 +445,12 @@ asSpecList <- function(spec) {
 #' @return A VEQuery constructed from the obj parameter
 #' @export
 asQuery <- function(obj,QueryName="Temp-Query") {
-  if ( ! "VEQuery" %in% class(obj) ) {
+  if ( ! inherits(obj,"VEQuery") ) {
     # check if it's a query spec or a list of query specs
     if ( is.list(obj) ) {
       qry.spec <- asSpecList(obj)
       # TODO: may have errors that need to be reported... (relying on $check below...)
-      if ( ! all(sapply(qry.spec,function(s) { "VEQuerySpec" %in% class(s) && s$valid() } )) ) {
+      if ( ! all(sapply(qry.spec,function(s) { inherits(s,"VEQuerySpec") && s$valid() } )) ) {
         # Second, if it wasn't a list of specs, perhaps it is an individual spec
         qry.spec <- list()
         spec <- VEQuerySpec$new(obj) # Attempt to convert unknown list to a single spec
@@ -447,7 +460,7 @@ asQuery <- function(obj,QueryName="Temp-Query") {
           qry.spec[[loc]] <- spec;
         }
       }
-    } else if ( "VEQuerySpec" %in% class(obj) ) {
+    } else if ( inherits(obj,"VEQuerySpec") ) {
       # Make a bare query spec into a one-element list
       qry.spec <- list(obj)
       names(qry.spec) <- obj$Name
@@ -581,11 +594,27 @@ ve.query.getlist <- function() {
 # "Name" is always included to support cbind
 defaultMetadata <- c("Units","Description")
 
+interleave <- function(x,y) {
+  # x and y are two lists of Measure names
+  # Structure is <Metric>.ByLevels
+  leaf.x <- stringr::str_split_fixed(x,"\\.",2)                 # split the metric lists (Metric + Remainder)
+  leaf.y <- stringr::str_split_fixed(y,"\\.",2)
+  leaves <- rbind(data.frame(leaf.x),data.frame(leaf.y))        # build a data.frame of sortable parts
+  names(leaves) <- c("Metric","Remainder")
+  top.rows <- ifelse(leaves$Metric %in% c("Scenario","Year"),"A","B") # keep Scenario and Year at the top
+  leaves <- leaves[order(top.rows,leaves$Metric,leaves$Remainder),] # put them in order
+  leaves <- unique(leaves)                                      # clear out duplicates
+  leaves <- sub("\\.+$","",apply(leaves,1,paste,collapse="."))  # reassemble the names, removing trailing ".$" for empty Remainder  
+  return(leaves)
+}
+
 # make a data.frame of all (and only) the valid query results
-# the results is a single data.frame with attributes
+# the result is a single data.frame with attributes
 ve.query.extract <- function(
   Results=NULL, Measures=NULL, Years=NULL,
-  wantMetadata=TRUE, wantData=TRUE, longScenarios=FALSE, exportOnly=FALSE) {
+  wantMetadata=TRUE, wantData=TRUE, nameMeasureBy=TRUE,
+  longScenarios=FALSE, exportOnly=FALSE, NA.default=NA,
+  baseScenario=NULL) {
   # "Results" is a list of VEResults (or a VEResultsList) from a VEModel
   # Visit each of the valid results in the Model (or Results list) and add its years as columns
   #  to the resulting data.frame, then return the accumulated result
@@ -594,12 +623,17 @@ ve.query.extract <- function(
   #   always included whether or not metadata is requested)
   # if "wantData" is TRUE, include data columns. If false, only generate metadata (used, e.g., by the
   #   visualizer JSON generation function)
+  # if "nameMeasureBy", incorporate By fields into the measure row name in Wide format, otherwise encode
+  #   into measure name
   # if "longScenarios" is TRUE, generate one scenario-year-metric per line with requested metaData;
   #   if "longScenarios" is FALSE (default=old style) generate one column per scenario-year and
   #   one row per metric By combination; Merge By fields onto metric name into a single name column;
   #   keep the By columns (if any) as part of default metadata per metric;
   # exportOnly, if TRUE, only includes metrics with the Export attribute set (conventionally to
   #   TRUE, but we're considering only present/missing)
+  # NA.default applies to Long Scenarios - any "NA" in the Values column will be replaced by zero
+  # baseScenario can be a one or two element character vector. First element is the name of a
+  #   model stage, and the second element is the year to use (default is overall model's BaseYear).
 
   Results <- self$results(Results) # generate list of valid VEQueryResults
   if ( length(Results)==0 ) {
@@ -607,7 +641,7 @@ ve.query.extract <- function(
     return( data.frame() )
   }
 
-  scenarioList <- lapply(Results,function(r) r$values() )
+  scenarioList <- lapply(Results,function(r) structure(r$values()) )
   scenarioList <- scenarioList[ ! sapply(scenarioList,is.null) ] # Should be no NULLs, but just in case...
 
   if ( is.character(wantMetadata) ) {
@@ -662,6 +696,7 @@ ve.query.extract <- function(
 
   # Keep only measures that are being sought
   # Filter the measures using for loops rather than lapply to ensure names stay up to date
+  # Need to index with seq since we're changing the list elements in place (removing measures)
   for ( scenario in seq(scenarioList) ) {
     for ( year in names(scenarioList[[scenario]]) ) {
       scenarioList[[scenario]][[year]] <- scenarioList[[scenario]][[year]][seekMeasures]
@@ -681,14 +716,50 @@ ve.query.extract <- function(
   ScenarioElements <- list()
   longScenarios <- longScenarios && wantData # if only metadata, always do wide format
 
+  # Pull out set of metrics and values for first scenario containing model BaseYear
+  # Let's do a function that takes baseScenario and scenario and returns TRUE/FALSE for isBaseYear
+
+  if ( longScenarios ) {
+    BaseYearValues <- NULL # Should be available, but might not be if Scenario or Year got filtered out above
+
+    getBaseYearScenario <- function(scenario,baseScenario) {
+      if ( is.character(baseScenario) ) {
+        if ( attr(scenario,"ScenarioName") == baseScenario[1] ) {
+          baseScenarioYear <- baseScenario[2]
+          if ( ! baseScenarioYear %in% names(scenario) ) {
+            # Default "base" year is first year in named scenario
+            baseScenarioYear <- names(scenario)[1]
+          }
+          BaseYear <- list(BaseYear=baseScenarioYear,isBaseYear=TRUE)
+        } else {
+          BaseYear <- NULL
+        }
+      } else {
+        BaseYear <- attr(scenario,"BaseYear") # may be NULL or not be BaseYear
+      }
+      return( BaseYear )
+    }
+
+    for ( scenario in scenarioList ) {
+     seekBaseYear <- getBaseYearScenario(scenario,baseScenario)
+     if ( is.null(seekBaseYear ) )next
+     if ( all(c("BaseYear","isBaseYear") %in% names(seekBaseYear)) && seekBaseYear$isBaseYear ) {
+       BaseYearValues <- scenario[[seekBaseYear$BaseYear]] # set of values for Year==BaseYear
+       break
+      }
+    }
+  }
+
+  # Compile results into output data.frames
+
   for ( scenario in scenarioList ) { # single set of filtered results
     ScenarioName <- attr(scenario,"ScenarioName")
     Elements <- attr(scenario,"ScenarioElements")
     for ( year in names(scenario) ) {
       if ( ! longScenarios ) { # will also use wide format if we're only getting Metadata
         longScenarios <- FALSE # so we don't add extra geography at the end
-        # NOTE: removed wantMetadata parameter from makeWideMeasureDataFrame - always need it
-        theseResults <- makeWideMeasureDataframe(scenario[[year]],ScenarioName,year,metadata=metadata)
+        # NOTE: wantMetadata parameter for makeWideMeasureDataFrame defaults to TRUE
+        theseResults <- makeWideMeasureDataframe(scenario[[year]],ScenarioName,year,metadata=metadata,nameMeasureBy=nameMeasureBy)
         if ( is.null(results.df) ) { # first set of measures
           if ( wantMetadata ) {
             results.df <- theseResults[,c("Measure",attr(theseResults,"Metadata"))]
@@ -707,17 +778,33 @@ ve.query.extract <- function(
 
         # Now attach the data value (expects row.names to contain the expanded Measure name)
         # Need to use merge rather than cbind to ensure that missing values are handled (e.g. if we
-        # have BZone breaks but no values reported in certain years)
-        byFields <- "Measure"
+        # have BZone breaks but no values for certain breaks reported in certain years)
+        # Also make an effort to preserve original ordering
+        mergeBy <- "Measure"
         metadata <- attr(theseResults,"Metadata")
-        if ( !is.null(metadata) && length(metadata)>0 ) byFields <- c(byFields,metadata)
-        mergeResults <- theseResults[,byFields,drop=FALSE]
+        if ( !is.null(metadata) && length(metadata)>0 ) mergeBy <- c(mergeBy,metadata)
+        mergeResults <- theseResults[,mergeBy,drop=FALSE]
         mergeResults[paste(ScenarioName,year,sep=".")] <- theseResults$Value
-        results.df <- merge(results.df,mergeResults,by=byFields,all=TRUE)
+        ordering <- interleave(results.df$Measure,mergeResults$Measure) # interleave puts full set of names in a nice order
+        results.df <- merge(results.df,mergeResults,by=mergeBy,all=TRUE)
         rownames(results.df) <- results.df$Measure
+        if ( length(ordering) != nrow(results.df) || any(! ordering %in% results.df$Measure) || any(! results.df$Measure %in% ordering) ) {
+          msg <- writeLog("Program error with interleave - generated list of incorrect length; VEmodel::query.R line 735",Level="error")
+          stop(msg,call.=FALSE)
+        }
+        results.df <- results.df[ ordering, ] # Keep the original ordering (merge screws it up...)
       } else {
         # Long format always produces metadata plus data...
-        theseResults <- makeLongMeasureDataframe(scenario[[year]],ScenarioName,year,metadata)
+        if ( !is.null(BaseYearValues) ) {
+          # We have a set if BaseYearValues to compare
+          BaseYearConfig <- getBaseYearScenario(scenario,baseScenario)
+          showBaseYear <- list(
+            Values=BaseYearValues,
+            isBaseYear=(!is.null(BaseYearConfig) && BaseYearConfig$isBaseYear && as.character(year)==as.character(BaseYearConfig$BaseYear))
+          )
+        } else showBaseYear <- NULL # no base year values, so don't show
+
+        theseResults <- makeLongMeasureDataframe(scenario[[year]],ScenarioName,year,metadata,BaseYear=showBaseYear,NA.default=NA.default)
         results.df <- rbind(results.df,theseResults) # Columns should conform...
       }
       Scenarios <- c( Scenarios, ScenarioName ) # dupes if multiple years for scenarios
@@ -735,14 +822,14 @@ ve.query.extract <- function(
       ScenarioColumns <- paste(Scenarios,ScenarioYears,sep=".")
       if ( length(Scenarios) != length(results.df[,ScenarioColumns,drop=FALSE]) || length(Scenarios) != length(ScenarioYears) ) {
         stop(
-          writeLogMessage("Scenarios don't match up with number of Result columns (VEModel/query.R circa line 732)",Level="error")
+          writeLogMessage("Scenarios don't match up with number of Result columns (VEModel/query.R circad line 732)",Level="error")
         )
       }
     } else {
       ScenarioColumns <- character(0)
     }
     # TODO: (harmless not to do) remove any metadata column that only has NA values (not present in any specification)
-  } else {
+  } else { # longScenarios
     ScenarioColumns <- "Scenario" # or whatever we used inside makeLongMeasureDataframe...
 
     # Add geography tags to query results, if not present.
@@ -797,6 +884,7 @@ ve.query.extract <- function(
       results.df$Region[ is.na(results.df$Region) | results.df$Region!="Region" ] <- "Region"
     }
 
+    # TODO: Check that we have the following covered...
     # Clean up geographies (create look-up data.frames, with row.names = smaller geography and
     # value the larger geography) - for Bzones, have multiple columns and iterate over those.
     # Check if Bzone and ! is.na(Bzone)
@@ -1007,7 +1095,7 @@ ve.query.export <- function(
   LongWide <- attr(extract,"Format")
   if ( isTRUE(LongWide=="Long") ) ExtractName <- paste0(ExtractName,"_Long")
 
-  ExtractTable <- paste(self$Model$setting("QueryExtractTable"),ExtractName)
+  ExtractTable <- paste(self$Model$setting("QueryExtractTable"),ExtractName,sep="_")
 
   # The partitioning default should get the table into the the "root" of the exporter.
   # For file-system-based exporters like CSV or SQLite, the root will be the model's
@@ -1019,11 +1107,10 @@ ve.query.export <- function(
 
 # Helper function to locate OutputDir given Results (VEModel or VEResults) for exporting query
 # data.frame
-# TODO: also use this function to locate the OutputDir/extract file name
 exportDir <- function(model=NULL,results=NULL) {
-  exportDir <- if ( class(model) == "VEModel" ) {
+  exportDir <- if ( inherits(model,"VEModel") ) {
     file.path(model$modelPath,model$setting("ResultsDir"))
-  } else if ( class(results) == "VEResults" ) {
+  } else if ( inherits(results,"VEResults") ) {
     dirname(dirname(normalizePath(results$resultsPath)))
   } else {
     stop( writeLogMessage("Cannot export: no model or results to locate output directory.",Level="error") )
@@ -1041,7 +1128,7 @@ exportDir <- function(model=NULL,results=NULL) {
 ve.query.results <- function(Results=NULL, Reload=FALSE) {
   # Figure out where to look for results
   if ( missing(Results) || is.null(Results) ) {
-    if ( "VEModel" %in% class(self$Model) ) {
+    if ( inherits(self$Model,"VEModel") ) {
       Results <- self$Model$results()
       # Output file was set when Model was attached
     } else {
@@ -1056,11 +1143,11 @@ ve.query.results <- function(Results=NULL, Reload=FALSE) {
     return( list() )
   }
 
-  if ( "VEResultsList" %in% class(Results) ) {
+  if ( inherits(Results,"VEResultsList") ) {
     # downshift to list of VEResults
     Results <- Results$results()
   }
-  if ( ! is.list(Results) && "VEResults" %in% class(Results) ) {
+  if ( ! is.list(Results) && inherits(Results,"VEResults") ) {
     # Handle pathological case of only one stage with Results
     Results <- list(Results)
   }
@@ -1136,27 +1223,27 @@ ve.query.run <- function(
     if ( is.null(Model) ) stop( writeLogMessage("No model results available to run query",Level="error") )
   }
   queryingModel <- FALSE # running with attached model
-  if ( "VEModel" %in% class(Model) ) {
+  if ( inherits(Model,"VEModel") ) {
     queryingModel <- TRUE
     self$model(Model)
     Results <- Model$results() # Convert model Reportable stages into a VEResults or VEResultsList if more than one
-    if ( "VEResultsList" %in% class(Results) ) { # downshift to a plain list
+    if ( inherits(Results,"VEResultsList") ) { # downshift to a plain list
       Results <- Results$results()
-    } else if ( "VEResults" %in% class(Results) ) { # upshift to a list
+    } else if ( inherits(Results,"VEResults") ) { # upshift to a list
       Results <- list(Results)
     } else {
       stop(
         writeLogMessage(paste("Unknown type for Model$results():",class(Results),collapse=","),Level="error")
       )
     }
-  } else if ( "VEResultsList" %in% class(Model) ) {
+  } else if ( inherits(Model,"VEResultsList") ) {
     Results <- Model$results() # Downshift to plain list of VEResults
-    if ( ! ("list" %in% class(Results)) || ! ("VEResults" %in% class(Results[[1]])) ) {
+    if ( ! (inherits(Results,"list")) || ! (inherits(Results[[1]],"VEResults")) ) {
       stop( writeLogMessage("Program error: VEResultsList won't convert to list of VEResults",Level="error") )
     }
-  } else if ( "VEResults" %in% class(Model) ) {
+  } else if ( inherits(Model,"VEResults") ) {
     Results <- list(Model) # Upshift a single VEResults object to a list of one
-    if ( ! ("list" %in% class(Results)) || ! ("VEResults" %in% class(Results[[1]])) ) {
+    if ( ! (inherits(Results,"list")) || ! (inherits(Results[[1]],"VEResults")) ) {
       stop( writeLogMessage("Program error: VEResultsList won't convert to list of VEResults",Level="error") )
     }
   } else {
@@ -1192,7 +1279,7 @@ ve.query.run <- function(
     writeLogMessage("Checking for cached query results",Level=log)
     upToDate <- sapply( private$reload(Results) ,
       function(r) {
-        if ( ! "VEQueryResults" %in% class(r) || ! r$valid() ) return(FALSE)
+        if ( ! inherits(r,"VEQueryResults") || ! r$valid() ) return(FALSE)
         tempEnv <- new.env()
         load(r$Path,envir=tempEnv)
         Timestamp <- tempEnv$Timestamp # Timestamp when query results were generated
@@ -1227,7 +1314,7 @@ ve.query.run <- function(
       Results=ResultsToUpdate,         # list of VEResults objects for which to generate results
       Specifications=self$getlist(),   # A list of VEQuerySpec
       QueryFile=self$outputfile(),     # File into which to save each query result (in Results$resultsPath)
-      Timestamp=Sys.time()             # Compared to ModelState last update to see if Query results are up to date
+      Timestamp=Sys.time()             # Compared later to ModelState last update to see if Query results are up to date
     )
     # Results of doQuery are written to the QueryFile in Results$resultsPath
     # self$results will reload them
@@ -1271,12 +1358,12 @@ ve.query.quick <- function( Table, Field, SpecName=NULL, Geography=NULL, FUN="su
     fullSpec <- model$list(outputs=TRUE,details=FALSE)
     whichSpecs <- fullSpec$GROUP=="Year" & fullSpec$TABLE==Table & fullSpec$NAME==Field
     modelSpec <- unique(fullSpec[whichSpecs,c("TABLE","NAME","UNITS","DESCRIPTION")])
-# Too many inconsistencies across modules where fields are rewritten...
-#    if ( nrow(modelSpec) > 1 ) {
-#      message("Model specifications are inconsistent across stages:")
-#      print(unique(fullSpec[whichSpecs,]))
-#      stop("Error locating field for quick query")
-#    }
+    # Too many inconsistencies across modules where fields are rewritten...
+    #    if ( nrow(modelSpec) > 1 ) {
+    #      message("Model specifications are inconsistent across stages:")
+    #      print(unique(fullSpec[whichSpecs,]))
+    #      stop("Error locating field for quick query")
+    #    }
     FieldUnits <- modelSpec$UNITS[1]
     FieldDescription <- modelSpec$DESCRIPTION[1]
   }
@@ -1312,7 +1399,7 @@ ve.query.quick <- function( Table, Field, SpecName=NULL, Geography=NULL, FUN="su
   Units <- character(0)
   Units[Field] <- FieldUnits
   Units[Geography] <- ""
-    
+
   if ( missing(FUN) || ! FUN %in% c("sum","mean","length") ) FUN = "sum"
 
   # Build the full specification
@@ -1370,18 +1457,18 @@ VEQuery <- R6::R6Class(
     names=ve.query.names,               # List (or update) names on internal QuerySpec list
     subset=ve.query.subset,             # Return a new VEQuery with a subset (or reordered) list of specs
     `[`=ve.query.index,                 # Alternate notation for subset
-    spec=ve.query.spec,                 # Return a single VEQuerySpec from the list
-    print=ve.query.print,               # List names of Specs in order, or optionally with details
-    getlist=ve.query.getlist,           # Extract he QuerySpec list (possibly filtering geography) for $run)
-    results=ve.query.results,           # report results of last run (available stage files)
-    extract=ve.query.extract,           # get requested (or all) results into a data.frame
-    export=ve.query.export,             # Export query results to .csv or something else (uses $extract)
-    outputfile=ve.query.outputfile,     # expand the file name into which to save QueryResults
-    run=ve.query.run,                   # results are cached in self$QueryResults
-    quickSpec=ve.query.quick,           # create a quick QuerySpec to summarize a field by geography
-    visual=ve.query.visual,             # visualize query results: same as export(format="visual",...)
-    outputConfig=ve.query.outputconfig  # generate outputconfig for visualizer (using "Export" spec)
-  ),
+      spec=ve.query.spec,                 # Return a single VEQuerySpec from the list
+      print=ve.query.print,               # List names of Specs in order, or optionally with details
+      getlist=ve.query.getlist,           # Extract he QuerySpec list (possibly filtering geography) for $run)
+      results=ve.query.results,           # report results of last run (available stage files)
+      extract=ve.query.extract,           # get requested (or all) results into a data.frame
+      export=ve.query.export,             # Export query results to .csv or something else (uses $extract)
+      outputfile=ve.query.outputfile,     # expand the file name into which to save QueryResults
+      run=ve.query.run,                   # results are cached in self$QueryResults
+      quickSpec=ve.query.quick,           # create a quick QuerySpec to summarize a field by geography
+      visual=ve.query.visual,             # visualize query results: same as export(format="visual",...)
+      outputConfig=ve.query.outputconfig  # generate outputconfig for visualizer (using "Export" spec)
+    ),
   private = list(
     QuerySpec=list(),                   # access via public functions - list of VEQuerySpec objects
     reload=ve.query.reload              # recreate self$QueryResults
@@ -1418,7 +1505,8 @@ ve.queryresults.values <- function() {
   if ( self$valid() ) {
     structure(self$Results$Values,
       ScenarioName=self$Source$Name,
-      ScenarioElements=self$Source$elements() # expanded list of ScenarioElements
+      ScenarioElements=self$Source$elements(),  # expanded list of ScenarioElements
+      BaseYear=self$Source$BaseYear             # identifies BaseYear and presence in this set of results
     )
   } else NULL
 }
@@ -1484,7 +1572,7 @@ ve.spec.init <- function(other=NULL) {
   # Create from another query spec, or a list object, or bare
   if ( ! is.null(other) ) {
     # A bare VEQuerySpec can be filled in with VEQuerySpec$update
-    if ( "VEQuerySpec" %in% class(other) ) {
+    if ( inherits(other,"VEQuerySpec") ) {
       # Get the list from the QuerySpec
       self$QuerySpec <- other$QuerySpec # it's just a standard R list
       self$check()
@@ -1697,7 +1785,7 @@ ve.spec.update <- function(
 ) {
   if ( ! is.null(Name) ) {
     self$QuerySpec[["Name"]] <- Name # replace query name if provided
-    
+
   }
   if ( ! missing(QuerySpec) ) {
     if ( inherits(QuerySpec,"VEQuerySpec") ) {
@@ -1738,6 +1826,7 @@ ve.spec.outputconfig <- function() {
 }
 
 # S3 helper - turn the R6 object into a standard list
+#' @export
 as.list.VEQuerySpec <- function(spec) return(spec$QuerySpec)
 
 #' @export
@@ -1925,7 +2014,6 @@ evaluateFunctionSpec <- function(measureName, measureSpec, measureEnv=NULL) {
 #
 # Process a measureSpec for a Year
 # Return the measure for inclusion in the results
-# currentMeasures creates environment in which to evaluate Function specs
 makeMeasure <- function(measureSpec,thisYear,QPrep_ls,measureEnv) {
 
   measureName <- measureSpec$Name
@@ -1976,6 +2064,7 @@ makeMeasure <- function(measureSpec,thisYear,QPrep_ls,measureEnv) {
     # and a full set of nested geographies if query was run for a smaller geography).
 
     # Filter measure based on Filter list of values for selectable fields
+    # TODO: verify (and document) operation of the Filter...
     if ( "Filter" %in% names(sumSpec) ) {
       filterFields <- names(sumSpec$Filter) # Filter is a list of vectors of values to select for each field
       filter <- rep(TRUE,nrow(measure)) # Start by selecting all the fields
@@ -1990,6 +2079,9 @@ makeMeasure <- function(measureSpec,thisYear,QPrep_ls,measureEnv) {
     if ( ! is.null(measureBy) ) {
       measure <- measure[,c(measureBy,"Measure")]
     }
+    # TODO: ensure that all possible By Field values are accounted for...
+    # TODO: May need to dig into summarizeDatasets... Made one change there to keep all merged
+    # rows, even non-matching...
 
     # Mark measure valid if we didn't filter it down to nothing
     measureValid <- is.data.frame(measure) && nrow(measure) > 0
@@ -2024,107 +2116,147 @@ makeMeasure <- function(measureSpec,thisYear,QPrep_ls,measureEnv) {
 # writing to the output file. This function is an export helper and should draw from the
 # result.env$Values list created for each scenario/ModelStage to build the resulting data.frame.
 
-makeWideMeasureDataframe <- function(Values,Scenario="",Year=NULL, wantMetadata=TRUE, metadata=character(0)) {
-  # Values is a named list of measures for a single scenario year (scenarios may have more than one
-  # year)
+makeWideMeasureDataframe <- function(Values,Scenario="",Year=NULL, wantMetadata=TRUE, metadata=character(0), nameMeasureBy=TRUE) {
+  # Values is a named list of measures for a single scenario year (scenarios may have more than one year)
   # Provide Year to get measure rows for the scenario year
   # WantMetadata will generally be TRUE
 
   outputNames    <- character(0)
   outputMeasures <- numeric(0)
   outputMetadata <- list()
+  outputByFields <- list()
   outputLength   <- 0 # to facilitate adding new metadata fields from later measures
 
   filterMetadata <- length(metadata)>0 # if metadata names not provided, show all
 
   # Values is a named list of data.frames
+  # Each data.frame contributes rows of measure data
   for ( measureName in names(Values) ) {
-
+    # Visit each measureName in Values (which are the query results for a single scenario)
     writeLog(paste("Adding",measureName,"to measure data frame"),Level="info")
-    measure      <- Values[[measureName]] # A data.frame with By columns plus Measure
+    measure      <- Values[[measureName]]     # A data.frame with By columns plus Measure
+    ByFields     <- attr(measure,"ByFields")  # Names of the By columns in "measure"
+    writeLog(paste(measureName,"All ByFields in measure: ",all(ByFields %in% names(measure))),Level="info")
+    if ( nrow(measure) > 1 ) {
+      # Will be true if the measure include breakpoints (i.e. length(ByFields)>0)
+      # NOTE: in wide format, By fields are encoded into the measure name if nameMeasureBy parameter is TRUE
+      # Generally you should not change "nameMeasureBy" unless you also wantMetadata or you'll get many copies
+      # of measure rows with no way to distinguish them.
+      nameFunc <- if ( nameMeasureBy ) function(x) paste(c(measureName,x),collapse=".") else function(x) measureName
+      measureNames <- as.character( apply(measure[,ByFields,drop=FALSE],1,nameFunc) )
+      # Yields Measure.By1.By2.etc (summarize names) unless nameMeaureBy=FALSE
+    } else {
+      measureNames <- measureName # single measure row
+    }
+    # Assemble vectors to add to resulting data.frame
+    # Can filter by setting for export, e.g., metadata=c("Bzone","Units","Description")
+    outputNames    <- c( outputNames, measureNames)           # Add this measure's name(s) to previously collected measure names
+    outputMeasures <- c( outputMeasures, measure$Measure )    # Add this measure's values to previously collected values
+    writeLog(paste(measureName,"Names and measures have the same length",length(outputNames)==length(outputMeasures)),Level="info")
+    if ( wantMetadata) priorOutputLength <- outputLength      # So we can handle new metadata for later measures
+    outputLength   <- length(outputMeasures)
+
     if ( wantMetadata ) {
-      metadataNames <- attr(measure,"MetadataNames") # The ones actually in this Measure
+      # First Measure gets one column for each of the metadata fields (usually Units and Description) and one
+      # additional column for each of the ByFields (filling in NA values for earlier measures the first time each
+      # uniqe ByField is encountered).
+      metadataNames <- attr(measure,"MetadataNames") # The ones actually in this Measure (usually Units and Description)
       if ( filterMetadata ) {
-        # leave out anything not explicitly requested, otherwise include all metadata
+        # if wanting specific fields (e.g. only Units), leave out anything not explicitly requested, otherwise include all metadata
         metadataNames <- metadataNames[ metadataNames %in% metadata ]
       }
       measureMetadata <- lapply(
         metadataNames,
         function(mn) {
-          mdata <- attr(measure,mn)
-          if ( is.null(mdata) ) mdata <- as.character(NA)
+          mdata <- attr(measure,mn) # The value of each metadata element is saved as an attribute on the measure
+          if ( is.null(mdata) ) mdata <- as.character(NA) # And it will default to NA rather than NULL if not present
+          if ( length(mdata) == 1 && length(measureNames) > 1 ) {
+            mdata <- rep(mdata,length(measureNames)) # And it will usually be a single row, which we duplicate here to the length of the measure
+          } else if ( length(mdata) != length(measure$Measure) ) {
+            msg <- writeLog(Level="error",paste(measureName,"attribute",mn,"has nonsensical length",length(mdata),"; should be 1 or",length(measure$Measure)))
+            stop(msg)
+          }
           mdata
         }
       )
-      names(measureMetadata) <- metadataNames
-    } else {
-      metadataNames <- character(0)
-      measureMetadata <- list()
-    }
-
-    if ( nrow(measure) > 1 ) {
-      # NOTE: in wide format, By fields are encoded into the measure name
-      byFields <- attr(measure,"ByFields")
-      measureNames <- as.character(
-        apply(
-          measure[,byFields,drop=FALSE],1,
-          function(x) paste(c(measureName,x),collapse=".")
-        )
-      ) # Yields Measure.By1.By2.etc (summarize names)
-    } else {
-      measureNames <- measureName # single measure row
-    }
-
-    # Assemble vectors to add to resulting data.frame
-    outputNames    <- c( outputNames, measureNames)
-    outputMeasures <- c( outputMeasures, measure$Measure )
-    if ( wantMetadata ) {
-      outputMetadata <- sapply( simplify=FALSE, USE.NAMES=TRUE,
-        metadataNames,
-        function(mname) {
-          if ( outputLength>0 && ! mname %in% names(outputMetadata) ) {
-            outputMetadata[[mname]] <- rep(as.character(NA),outputLength) # WARNING: presuming all metadata is character type
-          }
-          c( outputMetadata[[mname]], rep(measureMetadata[[mname]],length(measure$Measure)) )
+      names(measureMetadata) <- metadataNames # make sure the list has correct names
+      for ( mname in metadataNames ) {
+        if ( priorOutputLength>0 && ! mname %in% names(outputMetadata) ) {
+          # First time we've seen this metadata name, so add dummy values for the previous measures
+          outputMetadata[[mname]] <- rep(as.character(NA),priorOutputLength)
+          # WARNING: presuming all metadata is character type
         }
-      )
+        # Attach the current measure's metadata
+        outputMetadata[[mname]] <- c( outputMetadata[[mname]], measureMetadata[[mname]] )
+        writeLog(
+          paste(measureName,"metadata lengths are the same",length(outputMeasures),length(outputNames)==length(outputMetadata[[mname]])),
+          Level="info"
+        )
+      }
+
+      # Now do the same thing with the ByFields (except they will always have the same length as measure$Measure)
+      measureByFieldNames <- if ( filterMetadata ) ByFields[ ByFields %in% metadata ] else ByFields
+      if ( length(measureByFieldNames) > 0 ) {
+        # Assemble measureByFields including dummies for ByFields on earlier measures but not this one
+        measureByFields <- as.list(measure[,measureByFieldNames,drop=FALSE]) # get a list of columns of ByFields data
+
+        existingByFields <- setdiff(names(outputByFields),measureByFieldNames) # find ByFields from earlier measures but not on this one
+        if ( length(existingByFields) > 0 ) {
+          for ( bname in existingByFields ) { 
+            # Generate dummy ByField for ByFields from earlier measures but not this one
+            measureByFields[[bname]] <- c( measureByFields[[bname]], rep(as.character(NA),length(measureNames)) )
+          }
+        }
+        # Add MeasureByFields for this measure (including dummies) to the outputByFields
+        for ( bname in names(measureByFields) ) {
+          if ( priorOutputLength>0 && ! bname %in% names(outputByFields) ) {
+            # First time we've seen this ByField name, so add dummy values for the previous measures
+            outputByFields[[bname]] <- rep(as.character(NA),priorOutputLength)
+            # WARNING: presuming all metadata is character type
+          }
+          # Attach the current measure's ByFields data
+          outputByFields[[bname]] <- c( outputByFields[[bname]], measureByFields[[bname]] )
+          writeLog(paste(measureName,"Lengths are the same",length(outputMeasures),length(outputNames)==length(outputByFields[[bname]])),Level="info")
+        }
+      }
     }
-    outputLength <- length(outputMeasures)
   }
 
-  # Add the Year and Scenario as rows, if provided and we're doing the data
+  # Add the Year and Scenario as rows at the top of the measure lists, if those are provided and we want Data
   if ( ! is.null(Year)) {
     outputNames    <- c( "Year", outputNames )
     outputMeasures <- c( as.integer(Year), outputMeasures )
     if ( wantMetadata ) {
-      outputMetadata <- sapply( simplify=FALSE, USE.NAMES=TRUE,
-        metadataNames,
-        function(mname) {
-          metavalue <- if ( mname=="Units" ) {
-            "YR"
-          } else if ( mname=="Description" ) {
-            "Scenario Year"
-          } else as.character(NA)
-          c( metavalue, outputMetadata[[mname]] )
-        }
-      )
+      writeLog(paste("Adding Year metadata for",Year),Level="info")
+      for ( mname in names(outputMetadata) ) {
+        metavalue <- if ( mname=="Units" ) {
+          "YR"
+        } else if ( mname=="Description" ) {
+          "Scenario Year"
+        } else as.character(NA)
+        outputMetadata[[mname]] <- c( metavalue, outputMetadata[[mname]] )
+      }
+      for ( bname in names(outputByFields) ) {
+        outputByFields[[bname]] <- c( as.character(NA), outputByFields[[bname]] )
+      }
     }
   }
   if ( nzchar(Scenario[1]) ) {
     outputNames    <- c( "Scenario", outputNames )
     outputMeasures <- c( Scenario[1], outputMeasures )
     if ( wantMetadata ) {
-      outputMetadata <- sapply( simplify=FALSE, USE.NAMES=TRUE,
-        metadataNames,
-        function(mname) {
-          metavalue <- if ( mname=="Units" ) {
-            "character"
-          } else if ( mname=="Description" ) {
-            "Scenario Name"
-          } else as.character(NA)
-          c( metavalue, outputMetadata[[mname]] )
-        }
-      )
+      writeLog(paste("Adding Scenario metadata for",Scenario[1]),Level="info")
+      for ( mname in names(outputMetadata) ) {
+        metavalue <- if ( mname=="Units" ) {
+          "character"
+        } else if ( mname=="Description" ) {
+          "Scenario Name"
+        } else as.character(NA)
+        outputMetadata[[mname]] <- c( metavalue, outputMetadata[[mname]])
+      }
+      for ( bname in names(outputByFields) ) {
+        outputByFields[[bname]] <- c( as.character(NA), outputByFields[[bname]] )
+      }
     }
   }
 
@@ -2134,15 +2266,26 @@ makeWideMeasureDataframe <- function(Values,Scenario="",Year=NULL, wantMetadata=
   # Then manage tabular output by forcing each inner list element to character
 
   Data_df <- data.frame(Measure = outputNames)
-  if ( length(outputMetadata) > 0 ) Data_df <- cbind(Data_df, outputMetadata) # More than zero metadata fields requested
+  writeLog(paste(Scenario[1],"Data measure rows:",nrow(Data_df)),Level="info")
+  if ( wantMetadata ) {
+    if ( length(outputMetadata) > 0 ) {
+      writeLog(paste(Scenario[1],"scenario data.frame outputMetadata WRONG",wrong <- any(sapply(outputMetadata,length) != nrow(Data_df))),Level="info")
+      Data_df <- cbind(Data_df, outputMetadata) # More than zero metadata fields requested
+    }
+    if ( length(outputByFields) > 0 ) {
+      writeLog(paste(Scenario[1],"scenario data.frame outputByFields WRONG",wrong <- any(sapply(outputByFields,length) != nrow(Data_df))),Level="info")
+      Data_df <- cbind(Data_df, outputByFields) # More than zero ByFields requested
+    }
+  }
+  writeLog(paste(Scenario[1],"scenario data.frame outputMeasures WRONG",wrong <- any(sapply(outputMeasures,length) == nrow(Data_df))),Level="info")
   Data_df <- cbind(Data_df,Value=outputMeasures)
 
   rownames(Data_df) <- outputNames # rows are named after measures...
-  
+
   return(
     structure(
       Data_df,
-      Metadata=names(outputMetadata)
+      Metadata=c(names(outputMetadata),names(outputByFields))
     )
   )
 }
@@ -2155,11 +2298,15 @@ makeWideMeasureDataframe <- function(Values,Scenario="",Year=NULL, wantMetadata=
 #
 # DANGER/TODO: presuming each Value/Measure has the same (probably numeric) type. less of a
 # danger in this format than in the Wide format.
-
-makeLongMeasureDataframe <- function(Values,Scenario="",Year=NULL,Metadata=character(0)) {
+# BaseYear is expected to be a structure with "Values" for BaseYear measures and a flag isBaseYear if Scenario/Year is BaseYear
+# If not NULL, it will be injected as an additional value column, otherwise ignored.
+# NA.default (default = NA) will be used for any Value of NA
+makeLongMeasureDataframe <- function(Values,Scenario="",Year=NULL,Metadata=character(0),BaseYear=NULL,NA.default=NA) {
   # Values is a named list of measure data.frames for a single scenario year (scenarios may have
   # more than one year)
   # Will inject any requested Metadata fields (or all of them if none provided)
+
+  hasBaseYear = ! is.null(BaseYear)
 
   Data_df <- NULL
   measureNames <- names(Values)
@@ -2170,6 +2317,12 @@ makeLongMeasureDataframe <- function(Values,Scenario="",Year=NULL,Metadata=chara
   for ( measure in seq(Values) ) {
     measureName <- measureNames[[measure]]
     value <- Values[[measure]]
+    if ( hasBaseYear ) {
+      value$BaselineValue <- BaseYear$Values[[measureName]]$Measure
+      value$BaselineValue[is.na(value$BaselineValue)] <- NA.default # redundant if NA.default=NA
+      value$BaselineScenario <- if ( BaseYear$isBaseYear ) 1 else 0
+    } # Creates new fields in output data.frame for BaseYear measure values...
+    # Check that the result propagates to longScenarios data.frame...
 
     metadataNames <- attr(value,"MetadataNames")
     if ( is.null(metadataNames) ) {
@@ -2190,6 +2343,7 @@ makeLongMeasureDataframe <- function(Values,Scenario="",Year=NULL,Metadata=chara
     metadataFields <- unique(c(metadataFields,names(measureMetadata)))
 
     names(value) <- sub("^Measure$","Value",names(value)) # value is a data.frame
+    value$Value[ is.na(value$Value) ] <- NA.default # redundant if NA.default is NA
     if ( is.null(Data_df) ) {
       # First metric => create new Data_df
       byFieldsData <- names(value)[! names(value) %in% "Value"]
@@ -2311,6 +2465,9 @@ doQuery <- function (
     queryEnv$Specifications <- Specifications
     queryEnv$Timestamp <- Timestamp
     queryEnv$Values <- list()
+    queryEnv$BaseYear <- results$BaseYear # Flag base year to include values in longScenarios for baseline estimate
+    # BaseYear identifies the model BaseYear and also "isBaseYear" flag which is TRUE if this result set contains
+    #   base year data.
 
     makeManifest = TRUE # only do it for the first year of results; presume later years are the same
 
