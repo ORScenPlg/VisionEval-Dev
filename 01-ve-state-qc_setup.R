@@ -62,6 +62,19 @@ message(
   paste(mod_pkgs, collapse = '\n\t')
 )
 
+# Tell git to ignore changes due to the package installation
+# Local setting only - will not affect the repository
+# Get the list of .rda files
+rda_files = Sys.glob("*/data/*.rda")
+md_files = Sys.glob("*/inst/module_docs/*.md")
+png_files = Sys.glob("*/inst/module_docs/*.png")
+files = c(rda_files, md_files, png_files)
+
+# Loop over each file and run the git command
+for (file in files) {
+  system(paste("git update-index --assume-unchanged", file))
+}
+
 # Some packages are dependent on others, so install those second
 mod_pkgs2 = c("VELandUseDLSKATS")
 
@@ -84,7 +97,7 @@ setwd(owd)
 installModel()
 
 # Install base as a test
-installModel('VE-State', variant='base', confirm=FALSE)
+# installModel('VE-State', variant='base', confirm=FALSE)
 
 # Install all the variants in package "VEStateVariants"
 # Show available variants for one of the models

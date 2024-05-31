@@ -8,15 +8,15 @@ m$run()  #  Successful in 127 minutes
 
 
 # VE-State-odot-STS ---------------------------------------------------------
-# TODO: Fix VETravelDemand module needed in run script
-# Should we use VETravelDemandMM or VETravelDemandWFH?
+# TODO: Should we use VEHouseholdTravel, VETravelDemandMM, or VETravelDemandWFH?
+# Currently using VEHouseholdTravel as in base model
 m2 = openModel("VE-State-odot-STS")
 m2$run()  
 
 
 # VE-State-odot-wfh-sld-dl -------------------------------------------------
 m3 = openModel("VE-State-odot-wfh-sld-dl")
-m3$run("save")  # Successful in ~180 minutes
+m3$run("save")
 
 
 # VE-State-odotmm-AP22 ------------------------------------------------------
