@@ -16,7 +16,7 @@ m2$run()
 
 # VE-State-odot-wfh-sld-dl -------------------------------------------------
 m3 = openModel("VE-State-odot-wfh-sld-dl")
-m3$run()  # Successful in ~180 minutes
+m3$run("save")  # Successful in ~180 minutes
 
 
 # VE-State-odotmm-AP22 ------------------------------------------------------
@@ -30,9 +30,9 @@ m4$run()  # Errored after 38 minutes in Error in names(HhUrbanRoadDvmt_Ma) <- Ma
 
 
 # VE-State-odotmm-AP22-wfh -------------------------------------------------
-# TODO: Fix by copying input files mentioned in the log from VE-State-odot-wfh-sld-dl
+# TODO: Fix by specifying model years 2010, 2050
 m5 = openModel("VE-State-odotmm-AP22-wfh")
-m5$run()  # Errored after 10 sec
+m5$run()  
 
 
 # VE-State-odotmm-dl --------------------------------------------------------
@@ -41,6 +41,5 @@ m6$run()  # Successful in 156 minutes (many warnings)
 
 
 # VE-State-odotWFH-STS ------------------------------------------------------
-# TODO: Fix with input files (see log) from VE-State-odot-wfh-sld-dl
 m7 = openModel("VE-State-odotWFH-STS")
-m7$run()  # Errored after 10 sec
+m7$run() 
