@@ -8,15 +8,15 @@ m$run()  #  Successful in 127 minutes
 
 
 # VE-State-odot-STS ---------------------------------------------------------
-# TODO: Fix VETravelDemand module needed in run script
-# Should we use VETravelDemandMM or VETravelDemandWFH?
+# TODO: Should we use VEHouseholdTravel, VETravelDemandMM, or VETravelDemandWFH?
+# Currently using VEHouseholdTravel as in base model
 m2 = openModel("VE-State-odot-STS")
 m2$run()  
 
 
 # VE-State-odot-wfh-sld-dl -------------------------------------------------
 m3 = openModel("VE-State-odot-wfh-sld-dl")
-m3$run()  # Successful in ~180 minutes
+m3$run()  
 
 
 # VE-State-odotmm-AP22 ------------------------------------------------------
@@ -31,6 +31,8 @@ m4$run()  # Errored after 38 minutes in Error in names(HhUrbanRoadDvmt_Ma) <- Ma
 
 # VE-State-odotmm-AP22-wfh -------------------------------------------------
 # TODO: Fix by copying input files mentioned in the log from VE-State-odot-wfh-sld-dl
+# This fix won't work.  whf-sld-dl uses 2010, 2050 but 
+# AP22-wfh uses 2020, 2025, ..., 2050
 m5 = openModel("VE-State-odotmm-AP22-wfh")
 m5$run()  # Errored after 10 sec
 
