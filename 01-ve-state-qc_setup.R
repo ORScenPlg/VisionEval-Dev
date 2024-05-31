@@ -119,6 +119,6 @@ openModel()
 dir("models")
 
 # Build the documents
-# ve.build('docs') # Can't get this to work.
+# ve.build('docs') # Can't get this to work. (or else it is just very slow)
 
 message("Setup complete.")
