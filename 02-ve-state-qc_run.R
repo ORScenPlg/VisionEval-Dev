@@ -33,8 +33,8 @@ m$run()  #  Successful in 127 minutes
 
 
 # VE-State-odot-STS ---------------------------------------------------------
-# TODO: Should we use VEHouseholdTravel, VETravelDemandMM, or VETravelDemandWFH?
-# Currently using VEHouseholdTravel as in base model
+
+# Currently fixed using VEHouseholdTravel as in base model
 m2 = openModel("VE-State-odot-STS")
 m2$run()  
 
@@ -55,7 +55,7 @@ m4$run()  # Errored after 38 minutes in Error in names(HhUrbanRoadDvmt_Ma) <- Ma
 
 
 # VE-State-odotmm-AP22-wfh -------------------------------------------------
-# TODO: Fix by specifying model years 2010, 2050
+# Fixed by specifying model years 2010, 2050
 m5 = openModel("VE-State-odotmm-AP22-wfh")
 m5$run()  
 
