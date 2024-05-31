@@ -45,9 +45,6 @@ libs = Sys.getenv("R_LIBS_USER")  # Should be the same place used by ve.build
 lib = strsplit(libs, ";")[[1]][1]
 stopifnot(file.exists(lib), lib == .libPaths()[1])
 
-# Add a dependency missing
-install.packages("sn", lib=lib)
-
 # Set the location of ODOT_VE_Extras
 odot_ve_extras_dir = Sys.getenv("VE_HOME") |> 
   dirname() |>
@@ -77,6 +74,9 @@ for (file in files) {
 
 # Some packages are dependent on others, so install those second
 mod_pkgs2 = c("VELandUseDLSKATS")
+
+# Add a dependency missing
+install.packages("sn", lib=lib)
 
 message("Installing ", length(mod_pkgs), " new modules")
 install.packages(
@@ -119,13 +119,6 @@ for (variant in install_variants) {
     )
   })
 }
-
-# If variant fails to install (e.g. odot-STS), fix problems then
-# setwd(odot_ve_extras_dir)
-# remove.packages("VEStateVariants", lib=lib)
-# install.packages("VEStateVariants", lib=lib, repos=NULL, type="source")
-# setwd(owd)
-# installModel('VE-State', variant='odot-STS', confirm=FALSE)
 
 # List installed models
 openModel()

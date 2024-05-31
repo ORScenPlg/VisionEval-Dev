@@ -2,6 +2,31 @@
 
 openModel()
 
+
+# To reinstall a variant -------------------------------------------------------
+
+# Set the location of ODOT_VE_Extras
+odot_ve_extras_dir = Sys.getenv("VE_HOME") |> 
+  dirname() |>
+  file.path("ODOT_VE_Extras")
+stopifnot(dir.exists(odot_ve_extras_dir))
+
+# Reinstall the VEStateVariants package
+lib = .libPaths()[1]
+owd = getwd()
+setwd(odot_ve_extras_dir)
+remove.packages("VEStateVariants", lib=lib)
+setwd(odot_ve_extras_dir)
+install.packages("VEStateVariants", lib=lib, repos=NULL, type="source")
+setwd(owd)
+
+# Reinstall the model
+variant = 'odotmm-AP22-wfh'
+var_dir = file.path(Sys.getenv("VE_RUNTIME"), "models", paste0("VE-State-", variant))
+unlink(var_dir, recursive=TRUE)
+installModel('VE-State', variant=variant, confirm=FALSE)
+
+
 # VE-State-base --------------------------------------------------------------
 m = openModel("VE-State-base")
 m$run()  #  Successful in 127 minutes
